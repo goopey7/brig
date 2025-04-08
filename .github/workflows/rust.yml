@@ -1,4 +1,4 @@
-name: Rust
+name: Server (Build & Tests)
 
 on:
   push:
@@ -17,6 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
+      working-directory: ./brig_server
       run: cargo build --verbose
     - name: Run tests
+      working-directory: ./brig_server
       run: cargo test --verbose
