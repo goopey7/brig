@@ -1,13 +1,6 @@
 use crate::ConfigRef;
+use brig_common::api::{Dataset, Datasets};
 use openssh::{KnownHosts, Session};
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-struct Datasets
-{
-    pub server: String,
-    pub datasets: Vec<String>,
-}
 
 async fn update_sessions(config: ConfigRef) -> Vec<Datasets> {
     let config = config.read().await;
@@ -24,6 +17,8 @@ async fn update_sessions(config: ConfigRef) -> Vec<Datasets> {
         let ls = session
             .command("zfs")
             .arg("list")
+            .arg("-t")
+            .arg("snapshot")
             .arg("-o")
             .arg("name")
             .output()
@@ -34,15 +29,23 @@ async fn update_sessions(config: ConfigRef) -> Vec<Datasets> {
 
         let datasets: Vec<&str> = output
             .lines()
-            .skip(2)
+            .skip(1)
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .collect();
 
-        let mut ds = Datasets {server: server.address.clone(), datasets: vec![]};
+        let mut ds = Datasets {
+            server: server.address.clone(),
+            datasets: vec![],
+        };
         println!("Datasets on {}:", &ds.server);
         for dataset in &datasets {
-            ds.datasets.push(dataset.to_string());
+            ds.datasets.push(
+                Dataset {
+                pool: dataset.split_once('/').unwrap().0.to_string(),
+                dataset: dataset.split_once('/').unwrap().1.split_once('@').unwrap().0.to_string(),
+                snapshot: dataset.split_once('@').unwrap().1.to_string(),
+                } );
             println!("  {}", dataset);
         }
         response.push(ds);

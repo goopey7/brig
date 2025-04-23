@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.93"
+brig_common = { path = "../brig_common" }
 clap = {version = "4.5.21", features = ["derive"]}
 openssh = "0.11.5"
 serde = {version = "1.0.219", features = ["derive"]}

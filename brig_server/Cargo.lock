@@ -116,10 +116,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "brig_common"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "brig_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "brig_common",
  "clap",
  "openssh",
  "serde",

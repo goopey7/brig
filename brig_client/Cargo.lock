@@ -117,10 +117,18 @@ name = "brig_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "brig_common",
  "clap",
  "reqwest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "brig_common"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

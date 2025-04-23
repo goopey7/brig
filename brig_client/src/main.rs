@@ -1,3 +1,4 @@
+use brig_common::api::Datasets;
 use clap::Parser;
 use cli::{Cli, Commands};
 use config::Config;
@@ -14,7 +15,8 @@ fn main() {
     {
         Commands::List => {
             let t = reqwest::blocking::get(format!("{}/status", &config.server_url)).unwrap().text().unwrap();
-            println!("{}", t);
+            let d = serde_json::from_str::<Vec<Datasets>>(&t).unwrap();
+            println!("{}", serde_json::to_string_pretty(&d).unwrap());
         },
     }
 }
