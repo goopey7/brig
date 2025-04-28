@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Dataset {
     pub name: String,
     pub owner: String,
     pub server: String,
+    pub snapshot: String,
 }

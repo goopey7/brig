@@ -1,6 +1,7 @@
 mod api;
 mod cli;
 mod config;
+mod sync_state;
 
 use std::sync::Arc;
 
@@ -9,12 +10,15 @@ use clap::Parser;
 use cli::Cli;
 use config::config::Config;
 use openssh::Session;
+use sync_state::SyncState;
 use tokio::sync::{Mutex,RwLock};
 
 use warp::Filter;
 
 pub type SshSessions = Arc<Mutex<Vec<Session>>>;
 pub type ConfigRef = Arc<RwLock<Config>>;
+pub type SyncStateRef = Arc<RwLock<SyncState>>;
+pub type SyncStates = Arc<RwLock<Vec<SyncStateRef>>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,14 +32,28 @@ async fn main() -> Result<()> {
         move || config.clone()
     });
 
+    let states: Arc<RwLock<Vec<SyncStateRef>>> = Arc::new(RwLock::new(Vec::new()));
+    let states_filter = warp::any().map({
+        let states = Arc::clone(&states);
+        move || states.clone()
+    });
+
     let status = warp::get()
         .and(warp::path("status"))
         .and(warp::path::end())
-        .and(config_filter)
+        .and(config_filter.clone())
         .then(api::status);
 
+    let sync = warp::get()
+        .and(warp::path("sync"))
+        .and(warp::path::end())
+        .and(config_filter)
+        .and(states_filter)
+        .then(api::sync);
 
-    warp::serve(status).run(([127, 0, 0, 1], 3030)).await;
+    let routes = status.or(sync);
+
+    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 
     Ok(())
 }
