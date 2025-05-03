@@ -1,7 +1,10 @@
 use chrono::Local;
-use openssh::{KnownHosts, Session};
-use std::{sync::Arc, thread::sleep_ms, time::Duration};
-use tokio::sync::{Barrier, RwLock};
+use openssh::{KnownHosts, Session, Stdio};
+use std::sync::Arc;
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Barrier, RwLock},
+};
 
 use crate::{
     ConfigRef, SyncStateRef, SyncStates,
@@ -18,8 +21,15 @@ async fn sync_dataset(
     http_return_barrier: Arc<Barrier>,
     http_cleanup_barrier: Arc<Barrier>,
 ) {
-    let session = Session::connect(
+    let src_session = Session::connect(
         format!("{}@{}", &src.user, &src.address),
+        KnownHosts::Strict,
+    )
+    .await
+    .unwrap();
+
+    let dst_session = Session::connect(
+        format!("{}@{}", &dst.user, &dst.address),
         KnownHosts::Strict,
     )
     .await
@@ -40,21 +50,21 @@ async fn sync_dataset(
         snapshot = &timestamp
     );
 
-    let snapshot_result = session
+    let snapshot_result = src_session
         .command("zfs")
         .arg("snapshot")
         .arg(&to_snapshot)
         .status()
         .await;
 
-    let output = session
+    let output = src_session
         .command("zfs")
         .arg("send")
         .arg("-n")
         .arg("-P")
         .arg("-i")
-        .arg(from_snapshot)
-        .arg(to_snapshot)
+        .arg(&from_snapshot)
+        .arg(&to_snapshot)
         .output()
         .await
         .unwrap();
@@ -82,8 +92,41 @@ async fn sync_dataset(
         let mut state = state.write().await;
         state.total_bytes = total_bytes;
     }
-
     http_return_barrier.wait().await;
+
+    let mut zfs_send = src_session
+        .command("zfs")
+        .arg("send")
+        .arg("-i")
+        .arg(&from_snapshot)
+        .arg(&to_snapshot)
+        .stdout(Stdio::piped())
+        .spawn()
+        .await
+        .unwrap();
+    let mut zfs_recv = dst_session
+        .command("zfs")
+        .arg("recv")
+        .arg("-F")
+        .arg(format!("{}/{}", &dst.pool, &dataset.name))
+        .stdin(Stdio::piped())
+        .spawn()
+        .await
+        .unwrap();
+
+    let mut send_output = zfs_send.stdout().take().unwrap();
+    let mut recv_input = zfs_recv.stdin().take().unwrap();
+
+    tokio::io::copy(&mut send_output, &mut recv_input)
+        .await
+        .unwrap();
+    recv_input.shutdown().await.unwrap();
+
+    let send_status = zfs_send.wait().await.unwrap();
+    let recv_status = zfs_recv.wait().await.unwrap();
+
+    println!("Send exited with: {}", send_status);
+    println!("Receive exited with: {}", recv_status);
 
     http_cleanup_barrier.wait().await;
     let mut states = states.write().await;
@@ -171,8 +214,7 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
         states_to_return.push(state);
     }
 
-    for barrier in http_cleanup_barriers
-    {
+    for barrier in http_cleanup_barriers {
         barrier.wait().await;
     }
     warp::reply::json(&states_to_return)
