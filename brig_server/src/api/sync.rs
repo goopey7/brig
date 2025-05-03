@@ -1,8 +1,13 @@
-use std::{sync::Arc, time::Duration};
-
+use chrono::Local;
+use openssh::{KnownHosts, Session};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{config::{dataset, server::Server}, sync_state::SyncState, ConfigRef, SyncStateRef, SyncStates};
+use crate::{
+    ConfigRef, SyncStateRef, SyncStates,
+    config::{dataset, server::Server},
+    sync_state::SyncState,
+};
 
 async fn sync_dataset(
     state: SyncStateRef,
@@ -11,16 +16,65 @@ async fn sync_dataset(
     dst: Server,
     dataset: dataset::Dataset,
 ) {
-    /*
     let session = Session::connect(
         format!("{}@{}", &src.user, &src.address),
         KnownHosts::Strict,
     )
     .await
     .unwrap();
-    */
-    println!("{} sending {} to {}", src.name, dataset.name, dst.name);
-    std::thread::sleep(Duration::from_secs(10));
+
+    let timestamp = Local::now().format("%m-%d-%Y-%H-%M-%S").to_string();
+
+    let from_snapshot = format!(
+        "{pool}/{dataset}@{snapshot}",
+        pool = &src.pool,
+        dataset = &dataset.name,
+        snapshot = &dataset.snapshot
+    );
+    let to_snapshot = format!(
+        "{pool}/{dataset}@{snapshot}",
+        pool = &src.pool,
+        dataset = &dataset.name,
+        snapshot = &timestamp
+    );
+
+    let snapshot_result = session
+        .command("zfs")
+        .arg("snapshot")
+        .arg(&to_snapshot)
+        .status()
+        .await;
+
+    let output = session
+        .command("zfs")
+        .arg("send")
+        .arg("-n")
+        .arg("-P")
+        .arg("-i")
+        .arg(from_snapshot)
+        .arg(to_snapshot)
+        .output()
+        .await
+        .unwrap();
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+
+    let size_line = stdout_str
+        .lines()
+        .find(|line| line.starts_with("size"))
+        .expect("Couldn't find size line");
+
+    let total_bytes: u64 = size_line
+        .split_whitespace()
+        .nth(1)
+        .expect("Invalid size line format")
+        .parse()
+        .expect("Size not a number");
+
+    println!(
+        "{} sending {} to {} ({} bytes)",
+        src.name, dataset.name, dst.name, total_bytes
+    );
 
     let mut states = states.write().await;
 
@@ -68,8 +122,8 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
             state.write().await.dataset = dataset.name.clone();
             state.write().await.src = src_server.name.clone();
             state.write().await.dst = dst_server.name.clone();
-            state.write().await.total = "Total".to_owned();
-            state.write().await.sent = "Sent".to_owned();
+            state.write().await.total_bytes = 0;
+            state.write().await.sent_bytes = 0;
             tokio::spawn(sync_dataset(
                 state.clone(),
                 states.clone(),

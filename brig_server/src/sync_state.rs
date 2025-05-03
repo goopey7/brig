@@ -5,6 +5,6 @@ pub struct SyncState {
     pub dataset: String,
     pub src: String,
     pub dst: String,
-    pub total: String,
-    pub sent: String,
+    pub total_bytes: u64,
+    pub sent_bytes: u64,
 }
