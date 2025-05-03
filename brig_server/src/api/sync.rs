@@ -1,7 +1,7 @@
 use chrono::Local;
 use openssh::{KnownHosts, Session};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::{sync::Arc, thread::sleep_ms, time::Duration};
+use tokio::sync::{Barrier, RwLock};
 
 use crate::{
     ConfigRef, SyncStateRef, SyncStates,
@@ -15,6 +15,8 @@ async fn sync_dataset(
     src: Server,
     dst: Server,
     dataset: dataset::Dataset,
+    http_return_barrier: Arc<Barrier>,
+    http_cleanup_barrier: Arc<Barrier>,
 ) {
     let session = Session::connect(
         format!("{}@{}", &src.user, &src.address),
@@ -76,8 +78,15 @@ async fn sync_dataset(
         src.name, dataset.name, dst.name, total_bytes
     );
 
-    let mut states = states.write().await;
+    {
+        let mut state = state.write().await;
+        state.total_bytes = total_bytes;
+    }
 
+    http_return_barrier.wait().await;
+
+    http_cleanup_barrier.wait().await;
+    let mut states = states.write().await;
     let mut pos = None;
     for (i, other) in states.iter().enumerate() {
         if other.read().await.dataset == dataset.name {
@@ -93,12 +102,14 @@ async fn sync_dataset(
 pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
     let mut states_in_progress = vec![];
     let config = config.read().await;
+    let mut http_return_barriers = vec![];
+    let mut http_cleanup_barriers = vec![];
     for dataset in &config.datasets {
         let mut is_in_progress = false;
 
         for state in &*states.read().await {
             if state.read().await.dataset == dataset.name {
-                states_in_progress.push(state.read().await.clone());
+                states_in_progress.push(state.clone());
                 is_in_progress = true;
                 break;
             }
@@ -124,16 +135,45 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
             state.write().await.dst = dst_server.name.clone();
             state.write().await.total_bytes = 0;
             state.write().await.sent_bytes = 0;
+
+            let http_return_barrier = Arc::new(Barrier::new(2));
+            let http_cleanup_barrier = Arc::new(Barrier::new(2));
+            http_return_barriers.push(http_return_barrier.clone());
+            http_cleanup_barriers.push(http_cleanup_barrier.clone());
             tokio::spawn(sync_dataset(
                 state.clone(),
                 states.clone(),
                 src_server.clone(),
                 dst_server.clone(),
                 dataset.clone(),
+                http_return_barrier,
+                http_cleanup_barrier,
             ));
-            states_in_progress.push(state.read().await.clone());
+            states_in_progress.push(state.clone());
             states.write().await.push(state);
         }
     }
-    warp::reply::json(&states_in_progress)
+
+    let mut handles = vec![];
+
+    for barrier in http_return_barriers {
+        let barrier = barrier.clone();
+        handles.push(tokio::spawn(async move { barrier.wait().await }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let mut states_to_return = vec![];
+    for state in states.read().await.iter() {
+        let state = state.read().await.clone();
+        states_to_return.push(state);
+    }
+
+    for barrier in http_cleanup_barriers
+    {
+        barrier.wait().await;
+    }
+    warp::reply::json(&states_to_return)
 }
