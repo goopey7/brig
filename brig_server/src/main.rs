@@ -6,6 +6,7 @@ mod sync_state;
 use std::sync::Arc;
 
 use anyhow::Result;
+use api::switch::SwitchJson;
 use clap::Parser;
 use cli::Cli;
 use config::config::Config;
@@ -24,7 +25,13 @@ pub type SyncStates = Arc<RwLock<Vec<SyncStateRef>>>;
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
-    let config = std::fs::read_to_string(args.config_file)?;
+    let config_path = Arc::new(args.config_file);
+    let config_path_filter = warp::any().map({
+        let config = Arc::clone(&config_path);
+        move || config.clone()
+    });
+
+    let config = std::fs::read_to_string(&*config_path)?;
     let config = serde_json::from_str::<Config>(&config)?;
     let config_ref = Arc::new(RwLock::new(config));
     let config_filter = warp::any().map({
@@ -54,11 +61,20 @@ async fn main() -> Result<()> {
     let clean = warp::get()
         .and(warp::path("clean"))
         .and(warp::path::end())
-        .and(config_filter)
-        .and(states_filter)
+        .and(config_filter.clone())
+        .and(states_filter.clone())
         .then(api::clean);
 
-    let routes = status.or(sync).or(clean);
+    let switch = warp::post()
+        .and(warp::path("switch"))
+        .and(warp::path::end())
+        .and(warp::body::json::<SwitchJson>())
+        .and(config_path_filter)
+        .and(config_filter)
+        .and(states_filter)
+        .then(api::switch);
+
+    let routes = status.or(sync).or(clean).or(switch);
 
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 
