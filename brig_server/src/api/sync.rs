@@ -1,6 +1,6 @@
 use chrono::Local;
 use openssh::{KnownHosts, Session, Stdio};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::{
     io::AsyncWriteExt,
     sync::{Barrier, RwLock},
@@ -28,6 +28,22 @@ async fn sync_dataset(
     .await
     .unwrap();
 
+    let output = src_session
+        .command("zfs")
+        .arg("list")
+        .args(["-t", "snapshot"])
+        .args(["-o", "name"])
+        .args(["-S", "creation"])
+        .arg(format!(
+            "{pool}/{dataset}",
+            pool = &src.pool,
+            dataset = &dataset.name
+        ))
+        .output()
+        .await
+        .unwrap();
+    let src_snapshots = String::from_utf8_lossy(&output.stdout);
+
     let dst_session = Session::connect(
         format!("{}@{}", &dst.user, &dst.address),
         KnownHosts::Strict,
@@ -35,14 +51,35 @@ async fn sync_dataset(
     .await
     .unwrap();
 
+    let output = dst_session
+        .command("zfs")
+        .arg("list")
+        .args(["-t", "snapshot"])
+        .args(["-o", "name"])
+        .args(["-S", "creation"])
+        .arg(format!(
+            "{pool}/{dataset}",
+            pool = &src.pool,
+            dataset = &dataset.name
+        ))
+        .output()
+        .await
+        .unwrap();
+    let dst_snapshots = String::from_utf8_lossy(&output.stdout);
+
+    let mut from_snapshot = String::new();
+    for (i, src_snapshot) in src_snapshots.lines().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        if dst_snapshots.contains(src_snapshot) {
+            from_snapshot = src_snapshot.to_owned();
+            break;
+        }
+    }
+
     let timestamp = Local::now().format("%Y%m%d%H%M%S").to_string();
 
-    let from_snapshot = format!(
-        "{pool}/{dataset}@{snapshot}",
-        pool = &src.pool,
-        dataset = &dataset.name,
-        snapshot = &dataset.snapshot
-    );
     let to_snapshot = format!(
         "{pool}/{dataset}@brig-{snapshot}",
         pool = &src.pool,
@@ -50,12 +87,13 @@ async fn sync_dataset(
         snapshot = &timestamp
     );
 
-    let snapshot_result = src_session
+    src_session
         .command("zfs")
         .arg("snapshot")
         .arg(&to_snapshot)
         .status()
-        .await;
+        .await
+        .unwrap();
 
     let output = src_session
         .command("zfs")
