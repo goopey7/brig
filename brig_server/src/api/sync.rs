@@ -1,6 +1,6 @@
 use chrono::Local;
 use openssh::{KnownHosts, Session, Stdio};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::{
     io::AsyncWriteExt,
     sync::{Barrier, RwLock},
@@ -35,7 +35,7 @@ async fn sync_dataset(
     .await
     .unwrap();
 
-    let timestamp = Local::now().format("%m-%d-%Y-%H-%M-%S").to_string();
+    let timestamp = Local::now().format("%Y%m%d%H%M%S").to_string();
 
     let from_snapshot = format!(
         "{pool}/{dataset}@{snapshot}",
@@ -44,7 +44,7 @@ async fn sync_dataset(
         snapshot = &dataset.snapshot
     );
     let to_snapshot = format!(
-        "{pool}/{dataset}@{snapshot}",
+        "{pool}/{dataset}@brig-{snapshot}",
         pool = &src.pool,
         dataset = &dataset.name,
         snapshot = &timestamp

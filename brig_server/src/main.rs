@@ -47,11 +47,18 @@ async fn main() -> Result<()> {
     let sync = warp::get()
         .and(warp::path("sync"))
         .and(warp::path::end())
-        .and(config_filter)
-        .and(states_filter)
+        .and(config_filter.clone())
+        .and(states_filter.clone())
         .then(api::sync);
 
-    let routes = status.or(sync);
+    let clean = warp::get()
+        .and(warp::path("clean"))
+        .and(warp::path::end())
+        .and(config_filter)
+        .and(states_filter)
+        .then(api::clean);
+
+    let routes = status.or(sync).or(clean);
 
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 

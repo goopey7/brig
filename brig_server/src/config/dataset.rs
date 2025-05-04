@@ -6,4 +6,5 @@ pub struct Dataset {
     pub owner: String,
     pub server: String,
     pub snapshot: String,
+    pub snapshot_lifetime: String,
 }
