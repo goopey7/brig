@@ -59,24 +59,27 @@ async fn sync_dataset(
         .args(["-S", "creation"])
         .arg(format!(
             "{pool}/{dataset}",
-            pool = &src.pool,
+            pool = &dst.pool,
             dataset = &dataset.name
         ))
         .output()
         .await
         .unwrap();
     let dst_snapshots = String::from_utf8_lossy(&output.stdout);
+    println!("src snapshots: \n{}", src_snapshots);
+    println!("dst snapshots: \n{}", dst_snapshots);
 
     let mut from_snapshot = String::new();
     for (i, src_snapshot) in src_snapshots.lines().enumerate() {
         if i == 0 {
             continue;
         }
-        if dst_snapshots.contains(src_snapshot) {
+        if dst_snapshots.contains(src_snapshot.split_once('@').unwrap().1) {
             from_snapshot = src_snapshot.to_owned();
             break;
         }
     }
+    println!("{}", from_snapshot);
 
     let timestamp = Local::now().format("%Y%m%d%H%M%S").to_string();
 
@@ -95,6 +98,7 @@ async fn sync_dataset(
         .await
         .unwrap();
 
+    println!("{}", to_snapshot);
     let output = src_session
         .command("zfs")
         .arg("send")
@@ -108,6 +112,9 @@ async fn sync_dataset(
         .unwrap();
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!("{}", &stdout_str);
+    println!("{}", &stderr);
 
     let size_line = stdout_str
         .lines()
