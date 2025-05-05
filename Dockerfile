@@ -10,6 +10,11 @@ RUN cargo build --release -p brig_server
 FROM debian:bookworm-slim
 WORKDIR /app
 
+# Install SSH client
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssh-client && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy the release binary
 COPY --from=builder /usr/src/app/target/release/brig_server .
 
