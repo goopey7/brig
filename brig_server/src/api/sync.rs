@@ -2,7 +2,7 @@ use chrono::Local;
 use openssh::{KnownHosts, Session, Stdio};
 use std::sync::Arc;
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     sync::{Barrier, RwLock},
 };
 
@@ -162,9 +162,20 @@ async fn sync_dataset(
     let mut send_output = zfs_send.stdout().take().unwrap();
     let mut recv_input = zfs_recv.stdin().take().unwrap();
 
-    tokio::io::copy(&mut send_output, &mut recv_input)
-        .await
-        .unwrap();
+    let mut total_bytes_sent: u64 = 0;
+    let mut buffer = [0u8; 65536]; // 64 KiB buffer
+    loop {
+        let n = send_output.read(&mut buffer).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        recv_input.write_all(&buffer[..n]).await.unwrap();
+        total_bytes_sent += n as u64;
+        {
+            let mut state = state.write().await;
+            state.sent_bytes = total_bytes_sent;
+        }
+    }
     recv_input.shutdown().await.unwrap();
 
     let send_status = zfs_send.wait().await.unwrap();
