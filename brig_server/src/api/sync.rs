@@ -19,7 +19,6 @@ async fn sync_dataset(
     dst: Server,
     dataset: dataset::Dataset,
     http_return_barrier: Arc<Barrier>,
-    http_cleanup_barrier: Arc<Barrier>,
 ) {
     let src_session = Session::connect(
         format!("{}@{}", &src.user, &src.address),
@@ -184,7 +183,6 @@ async fn sync_dataset(
     println!("Send exited with: {}", send_status);
     println!("Receive exited with: {}", recv_status);
 
-    http_cleanup_barrier.wait().await;
     let mut states = states.write().await;
     let mut pos = None;
     for (i, other) in states.iter().enumerate() {
@@ -247,7 +245,6 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
                 dst_server.clone(),
                 dataset.clone(),
                 http_return_barrier,
-                http_cleanup_barrier,
             ));
             states_in_progress.push(state.clone());
             states.write().await.push(state);
@@ -271,10 +268,5 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
         states_to_return.push(state);
     }
 
-    tokio::spawn(async move {
-        for barrier in http_cleanup_barriers {
-            barrier.wait().await;
-        }
-    });
     warp::reply::json(&states_to_return)
 }
