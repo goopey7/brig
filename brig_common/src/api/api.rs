@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ErrorCode {
     Unauthorized,
     SshSessionFail {
@@ -31,48 +31,9 @@ pub enum ErrorCode {
     ErrorWritingConfigFile {
         path: PathBuf,
     },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ErrorResponse {
-    error: ErrorCode,
-    msg: String,
-}
-
-impl ErrorResponse {
-    pub fn new(error: ErrorCode) -> Self {
-        let msg = match error {
-            ErrorCode::Unauthorized => "Not authorized by oidc",
-            ErrorCode::SshSessionFail { ref user, ref ip } => {
-                &format!("failed to ssh into {}@{}", user, ip)
-            }
-            ErrorCode::ReadOnlyFail { ref user, ref ip } => {
-                &format!("{}@{}: unable to zfs set readonly!", user, ip)
-            }
-            ErrorCode::DatasetNotFoundInConfig { ref dataset } => {
-                &format!("dataset {} not found in config!", dataset)
-            }
-            ErrorCode::ZfsNotFound { ref user, ref ip } => {
-                &format!("{}@{}: zfs not found!", user, ip)
-            }
-            ErrorCode::ServerNotFoundFromDataset {
-                ref dataset,
-                ref server_name,
-            } => &format!("{} not found! referenced by {}", server_name, dataset),
-            ErrorCode::ServerNotFoundFromRequest { ref server_name } => {
-                &format!("server: {} not found!", server_name)
-            }
-            ErrorCode::ConfigIsInvalidJson => "Config file is not valid json!",
-            ErrorCode::ErrorWritingConfigFile { ref path } => {
-                &format!("unable to write config to {}", path.display())
-            }
-        };
-
-        Self {
-            error,
-            msg: msg.to_owned(),
-        }
-    }
+    DatasetNotSynced {
+        dataset: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]

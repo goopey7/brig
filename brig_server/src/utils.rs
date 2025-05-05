@@ -1,16 +1,14 @@
-use brig_common::api::api::{ErrorCode, ErrorResponse};
+use brig_common::api::api::ErrorCode;
 use openssh::{KnownHosts, Session};
 
 use crate::config::server::Server;
 
-pub async fn create_ssh_session(user: &str, address: &str) -> Result<Session, ErrorResponse> {
+pub async fn create_ssh_session(user: &str, address: &str) -> Result<Session, ErrorCode> {
     Session::connect(format!("{}@{}", user, address), KnownHosts::Strict)
         .await
-        .map_err(|_| {
-            ErrorResponse::new(ErrorCode::SshSessionFail {
-                user: user.to_owned(),
-                ip: address.to_owned(),
-            })
+        .map_err(|_| ErrorCode::SshSessionFail {
+            user: user.to_owned(),
+            ip: address.to_owned(),
         })
 }
 
@@ -19,11 +17,11 @@ pub async fn set_readonly(
     server: &Server,
     dataset: &str,
     is_on: bool,
-) -> Result<(), ErrorResponse> {
-    let err = ErrorResponse::new(ErrorCode::ReadOnlyFail {
+) -> Result<(), ErrorCode> {
+    let err = ErrorCode::ReadOnlyFail {
         user: server.user.clone(),
         ip: server.address.clone(),
-    });
+    };
     session
         .command("sudo")
         .arg("zfs")
@@ -36,6 +34,6 @@ pub async fn set_readonly(
         ))
         .status()
         .await
-        .map_err(|_| err.clone())?;
+        .map_err(|_| err)?;
     Ok(())
 }

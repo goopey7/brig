@@ -1,9 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use brig_common::api::{
-    api::{ErrorCode, ErrorResponse},
-    switch::SwitchRequest,
-};
+use brig_common::api::{api::ErrorCode, switch::SwitchRequest};
 
 use crate::{
     ConfigRef,
@@ -16,7 +13,7 @@ async fn switch_dataset(
     dataset: String,
     old_server: Server,
     new_server: Server,
-) -> Result<(), ErrorResponse> {
+) -> Result<(), ErrorCode> {
     let old_session = create_ssh_session(&old_server.user, &old_server.address).await?;
     let new_session = create_ssh_session(&new_server.user, &new_server.address).await?;
 
@@ -28,14 +25,12 @@ async fn switch_dataset(
         .datasets
         .iter_mut()
         .find(|ds: &&mut Dataset| ds.name == dataset)
-        .ok_or(ErrorResponse::new(ErrorCode::DatasetNotFoundInConfig {
-            dataset,
-        }))?;
+        .ok_or(ErrorCode::DatasetNotFoundInConfig { dataset })?;
     dataset.server = new_server.name;
     Ok(())
 }
 
-async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorResponse> {
+async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorCode> {
     // ensure all servers have the same latest snapshot
     let mut latest_snapshots = vec![];
     for server in &config.read().await.servers {
@@ -53,11 +48,9 @@ async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorRe
             ))
             .output()
             .await
-            .map_err(|_| {
-                ErrorResponse::new(ErrorCode::ZfsNotFound {
-                    user: server.user.clone(),
-                    ip: server.address.clone(),
-                })
+            .map_err(|_| ErrorCode::ZfsNotFound {
+                user: server.user.clone(),
+                ip: server.address.clone(),
             })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -86,10 +79,10 @@ async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorRe
         .servers
         .iter()
         .find(|s: &&Server| s.name == dataset.server)
-        .ok_or(ErrorResponse::new(ErrorCode::ServerNotFoundFromDataset {
+        .ok_or(ErrorCode::ServerNotFoundFromDataset {
             dataset: dataset.name.clone(),
             server_name: dataset.server.clone(),
-        }))?;
+        })?;
 
     let session = create_ssh_session(&server.user, &server.address).await?;
 
@@ -100,11 +93,9 @@ async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorRe
             .arg(format!("{}", latest_snapshot))
             .output()
             .await
-            .map_err(|_| {
-                ErrorResponse::new(ErrorCode::ZfsNotFound {
-                    user: server.user.clone(),
-                    ip: server.address.clone(),
-                })
+            .map_err(|_| ErrorCode::ZfsNotFound {
+                user: server.user.clone(),
+                ip: server.address.clone(),
             })?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.is_empty() {
@@ -128,16 +119,18 @@ pub async fn switch(
         .find(|ds: &&Dataset| ds.name == req.dataset)
         .take();
     if dataset.is_none() {
-        return warp::reply::json(&ErrorResponse::new(ErrorCode::DatasetNotFoundInConfig {
+        return warp::reply::json(&ErrorCode::DatasetNotFoundInConfig {
             dataset: req.dataset.clone(),
-        }));
+        });
     }
     let dataset = dataset.unwrap();
 
     match is_synced(dataset, config_arc.clone()).await {
         Ok(is_synced) => {
             if !is_synced {
-                return warp::reply::json(&());
+                return warp::reply::json(&ErrorCode::DatasetNotSynced {
+                    dataset: dataset.name.clone(),
+                });
             }
         }
         Err(e) => {
@@ -150,10 +143,10 @@ pub async fn switch(
         .iter()
         .find(|server: &&Server| server.name == dataset.server);
     if old_server.is_none() {
-        return warp::reply::json(&ErrorResponse::new(ErrorCode::ServerNotFoundFromDataset {
+        return warp::reply::json(&ErrorCode::ServerNotFoundFromDataset {
             dataset: dataset.name.clone(),
             server_name: dataset.server.clone(),
-        }));
+        });
     }
     let old_server = old_server.unwrap();
 
@@ -162,9 +155,9 @@ pub async fn switch(
         .iter()
         .find(|server: &&Server| server.name == req.new_server);
     if new_server.is_none() {
-        return warp::reply::json(&ErrorResponse::new(ErrorCode::ServerNotFoundFromRequest {
+        return warp::reply::json(&ErrorCode::ServerNotFoundFromRequest {
             server_name: req.new_server.clone(),
-        }));
+        });
     }
     let new_server = new_server.unwrap();
 
@@ -180,16 +173,16 @@ pub async fn switch(
     }
 
     let json_str = serde_json::to_string_pretty(&*config_arc.read().await)
-        .map_err(|_| ErrorResponse::new(ErrorCode::ConfigIsInvalidJson));
+        .map_err(|_| ErrorCode::ConfigIsInvalidJson);
     if let Err(e) = json_str {
         return warp::reply::json(&e);
     }
     let json_str = json_str.unwrap();
-    if let Err(e) = std::fs::write(&*config_path, &json_str).map_err(|_| {
-        ErrorResponse::new(ErrorCode::ErrorWritingConfigFile {
+    if let Err(e) =
+        std::fs::write(&*config_path, &json_str).map_err(|_| ErrorCode::ErrorWritingConfigFile {
             path: (&*config_path).clone(),
         })
-    }) {
+    {
         return warp::reply::json(&e);
     }
 
