@@ -204,6 +204,7 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
         }
 
         if is_in_progress {
+            println!("dataset {} is already in progress", &dataset.name);
             continue;
         }
 
@@ -259,8 +260,10 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
         states_to_return.push(state);
     }
 
-    for barrier in http_cleanup_barriers {
-        barrier.wait().await;
-    }
+    tokio::spawn(async move {
+        for barrier in http_cleanup_barriers {
+            barrier.wait().await;
+        }
+    });
     warp::reply::json(&states_to_return)
 }
