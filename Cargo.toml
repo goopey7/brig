@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = [
+    "brig_client",
+    "brig_common",
+    "brig_server"
+]
+

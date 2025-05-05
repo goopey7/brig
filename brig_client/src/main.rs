@@ -1,4 +1,4 @@
-use brig_common::api::Datasets;
+use brig_common::api::api::Datasets;
 use clap::Parser;
 use cli::{Cli, Commands};
 use config::Config;
