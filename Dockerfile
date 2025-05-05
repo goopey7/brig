@@ -7,7 +7,7 @@ WORKDIR /usr/src/app
 
 # Copy everything and build in release mode
 COPY . .
-RUN cargo build --release
+RUN cargo build --release -p brig_server
 
 # Final minimal image
 FROM debian:bullseye-slim
