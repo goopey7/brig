@@ -2,9 +2,9 @@ use chrono::{Duration, Local};
 use openssh::{KnownHosts, Session};
 use regex::Regex;
 
-use crate::{ConfigRef, SyncStates};
+use crate::ConfigRef;
 
-pub async fn clean(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
+pub async fn clean(config: ConfigRef) -> warp::reply::Json {
     let config = &config.read().await;
     for dataset in &config.datasets {
         let snapshot_expiration_duration = match &dataset.snapshot_lifetime.chars().last().unwrap()

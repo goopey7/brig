@@ -2,17 +2,18 @@ mod api;
 mod cli;
 mod config;
 mod sync_state;
+mod utils;
 
 use std::sync::Arc;
 
 use anyhow::Result;
-use api::switch::SwitchJson;
+use brig_common::api::switch::SwitchRequest;
 use clap::Parser;
 use cli::Cli;
 use config::config::Config;
 use openssh::Session;
 use sync_state::SyncState;
-use tokio::sync::{Mutex,RwLock};
+use tokio::sync::{Mutex, RwLock};
 
 use warp::Filter;
 
@@ -62,16 +63,14 @@ async fn main() -> Result<()> {
         .and(warp::path("clean"))
         .and(warp::path::end())
         .and(config_filter.clone())
-        .and(states_filter.clone())
         .then(api::clean);
 
     let switch = warp::post()
         .and(warp::path("switch"))
         .and(warp::path::end())
-        .and(warp::body::json::<SwitchJson>())
+        .and(warp::body::json::<SwitchRequest>())
         .and(config_path_filter)
         .and(config_filter)
-        .and(states_filter)
         .then(api::switch);
 
     let routes = status.or(sync).or(clean).or(switch);

@@ -1,5 +1,5 @@
 use crate::ConfigRef;
-use brig_common::api::{Dataset, Datasets};
+use brig_common::api::api::{Dataset, Datasets};
 use openssh::{KnownHosts, Session};
 
 async fn update_sessions(config: ConfigRef) -> Vec<Datasets> {
