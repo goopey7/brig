@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
         .and(warp::path::end())
         .and(config_filter.clone())
         .and(states_filter.clone())
-        .then(api::sync);
+        .then(api::sync::sync_all);
 
     let sync_one = warp::post()
         .and(warp::path("sync"))
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
         .and(warp::body::json::<SyncRequest>())
         .and(config_filter.clone())
         .and(states_filter.clone())
-        .then(api::sync::sync_one);
+        .then(api::sync::sync);
 
     let clean = warp::get()
         .and(warp::path("clean"))

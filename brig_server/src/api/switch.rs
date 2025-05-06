@@ -5,7 +5,7 @@ use brig_common::api::{api::ErrorCode, switch::SwitchRequest};
 use crate::{
     ConfigRef,
     config::{dataset::Dataset, server::Server},
-    utils::{create_ssh_session, set_readonly},
+    utils,
 };
 
 async fn switch_dataset(
@@ -14,11 +14,11 @@ async fn switch_dataset(
     old_server: Server,
     new_server: Server,
 ) -> Result<(), ErrorCode> {
-    let old_session = create_ssh_session(&old_server.user, &old_server.address).await?;
-    let new_session = create_ssh_session(&new_server.user, &new_server.address).await?;
+    let old_session = utils::create_ssh_session(&old_server.user, &old_server.address).await?;
+    let new_session = utils::create_ssh_session(&new_server.user, &new_server.address).await?;
 
-    set_readonly(&old_session, &old_server, &dataset, true).await?;
-    set_readonly(&new_session, &new_server, &dataset, false).await?;
+    utils::set_readonly(&old_session, &old_server, &dataset, true).await?;
+    utils::set_readonly(&new_session, &new_server, &dataset, false).await?;
 
     let mut config = config.write().await;
     let dataset = config
@@ -34,35 +34,9 @@ async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorCo
     // ensure all servers have the same latest snapshot
     let mut latest_snapshots = vec![];
     for server in &config.read().await.servers {
-        let session = create_ssh_session(&server.user, &server.address).await?;
-        let output = session
-            .command("zfs")
-            .arg("list")
-            .args(["-t", "snapshot"])
-            .args(["-o", "name"])
-            .args(["-S", "creation"])
-            .arg(format!(
-                "{pool}/{dataset}",
-                pool = server.pool,
-                dataset = dataset.name
-            ))
-            .output()
-            .await
-            .map_err(|_| ErrorCode::ZfsNotFound {
-                user: server.user.clone(),
-                ip: server.address.clone(),
-            })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let latest = stdout.lines().nth(1);
-        match latest {
-            Some(latest) => {
-                latest_snapshots.push(latest.to_owned());
-            }
-            None => {
-                return Ok(false);
-            }
-        }
+        let session = utils::create_ssh_session(&server.user, &server.address).await?;
+        let latest = utils::get_latest_snapshot(&session, &server.pool, &dataset.name).await?;
+        latest_snapshots.push(latest)
     }
 
     if let Some(first) = latest_snapshots.first() {
@@ -84,7 +58,7 @@ async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorCo
             server_name: dataset.server.clone(),
         })?;
 
-    let session = create_ssh_session(&server.user, &server.address).await?;
+    let session = utils::create_ssh_session(&server.user, &server.address).await?;
 
     if let Some(latest_snapshot) = latest_snapshots.first() {
         let output = session
@@ -93,9 +67,8 @@ async fn is_synced(dataset: &Dataset, config: ConfigRef) -> Result<bool, ErrorCo
             .arg(format!("{}", latest_snapshot))
             .output()
             .await
-            .map_err(|_| ErrorCode::ZfsNotFound {
-                user: server.user.clone(),
-                ip: server.address.clone(),
+            .map_err(|_| ErrorCode::ZfsCommandError {
+                msg: format!("unable to zfs diff {}", latest_snapshot)
             })?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.is_empty() {

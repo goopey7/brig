@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ErrorCode {
     Unauthorized,
     SshSessionFail {
@@ -23,15 +23,34 @@ pub enum ErrorCode {
     ServerNotFoundFromRequest {
         server_name: String,
     },
-    ZfsNotFound {
-        user: String,
-        ip: String,
+    ZfsCommandError {
+        msg: String,
     },
     ConfigIsInvalidJson,
     ErrorWritingConfigFile {
         path: PathBuf,
     },
     DatasetNotSynced {
+        dataset: String,
+    },
+    NoCommonSnapshot {
+        dataset: String,
+    },
+    FailedToTakeStdout {
+        to: String,
+        from: String,
+    },
+    FailedToTakeStdin {
+        to: String,
+        from: String,
+    },
+    FailedToReadSendOutputToBuffer,
+    FailedToWriteBufferToRecvInput,
+    FailedToShutdownOutputStream,
+    FailedToWaitForZfsSend,
+    FailedToWaitForZfsRecv,
+    NoSnapshotsFound {
+        pool: String,
         dataset: String,
     },
 }

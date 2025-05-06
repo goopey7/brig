@@ -1,11 +1,8 @@
-use brig_common::api::sync::SyncRequest;
-use chrono::Local;
-use openssh::{KnownHosts, Session, Stdio};
+use brig_common::api::{api::ErrorCode, sync::SyncRequest};
 use std::sync::Arc;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::{Barrier, RwLock},
-};
+use tokio::
+    sync::{Barrier, RwLock}
+;
 
 use crate::{
     ConfigRef, SyncStateRef, SyncStates,
@@ -14,6 +11,7 @@ use crate::{
         server::Server,
     },
     sync_state::SyncState,
+    utils,
 };
 
 async fn sync_dataset(
@@ -23,169 +21,33 @@ async fn sync_dataset(
     dst: Server,
     dataset: dataset::Dataset,
     http_return_barrier: Arc<Barrier>,
-) {
-    let src_session = Session::connect(
-        format!("{}@{}", &src.user, &src.address),
-        KnownHosts::Strict,
-    )
-    .await
-    .unwrap();
-
-    let output = src_session
-        .command("zfs")
-        .arg("list")
-        .args(["-t", "snapshot"])
-        .args(["-o", "name"])
-        .args(["-S", "creation"])
-        .arg(format!(
-            "{pool}/{dataset}",
-            pool = &src.pool,
-            dataset = &dataset.name
-        ))
-        .output()
-        .await
-        .unwrap();
-    let src_snapshots = String::from_utf8_lossy(&output.stdout);
-
-    let dst_session = Session::connect(
-        format!("{}@{}", &dst.user, &dst.address),
-        KnownHosts::Strict,
-    )
-    .await
-    .unwrap();
-
-    let output = dst_session
-        .command("zfs")
-        .arg("list")
-        .args(["-t", "snapshot"])
-        .args(["-o", "name"])
-        .args(["-S", "creation"])
-        .arg(format!(
-            "{pool}/{dataset}",
-            pool = &dst.pool,
-            dataset = &dataset.name
-        ))
-        .output()
-        .await
-        .unwrap();
-    let dst_snapshots = String::from_utf8_lossy(&output.stdout);
-    println!("src snapshots: \n{}", src_snapshots);
-    println!("dst snapshots: \n{}", dst_snapshots);
-
-    let mut from_snapshot = String::new();
-    for (i, src_snapshot) in src_snapshots.lines().enumerate() {
-        if i == 0 {
-            continue;
-        }
-        if dst_snapshots.contains(src_snapshot.split_once('@').unwrap().1) {
-            from_snapshot = src_snapshot.to_owned();
-            break;
-        }
-    }
-    println!("{}", from_snapshot);
-
-    let timestamp = Local::now().format("%Y%m%d%H%M%S").to_string();
-
-    let to_snapshot = format!(
-        "{pool}/{dataset}@brig-{snapshot}",
-        pool = &src.pool,
-        dataset = &dataset.name,
-        snapshot = &timestamp
-    );
-
-    src_session
-        .command("zfs")
-        .arg("snapshot")
-        .arg(&to_snapshot)
-        .status()
-        .await
-        .unwrap();
-
-    println!("{}", to_snapshot);
-    let output = src_session
-        .command("zfs")
-        .arg("send")
-        .arg("-n")
-        .arg("-P")
-        .arg("-i")
-        .arg(&from_snapshot)
-        .arg(&to_snapshot)
-        .output()
-        .await
-        .unwrap();
-
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    println!("{}", &stdout_str);
-    println!("{}", &stderr);
-
-    let size_line = stdout_str
-        .lines()
-        .find(|line| line.starts_with("size"))
-        .expect("Couldn't find size line");
-
-    let total_bytes: u64 = size_line
-        .split_whitespace()
-        .nth(1)
-        .expect("Invalid size line format")
-        .parse()
-        .expect("Size not a number");
-
-    println!(
-        "{} sending {} to {} ({} bytes)",
-        src.name, dataset.name, dst.name, total_bytes
-    );
-
+) -> Result<(), ErrorCode> {
+    let src_session = utils::create_ssh_session(&src.user, &src.address).await?;
+    let dst_session = utils::create_ssh_session(&dst.user, &dst.address).await?;
+    let src_snapshots = utils::list_snapshots(&src_session, &src.pool, &dataset.name).await?;
+    let dst_snapshots = utils::list_snapshots(&dst_session, &dst.pool, &dataset.name).await?;
+    let latest_common_snapshot =
+        utils::find_latest_common_snapshot(&dataset.name, &src_snapshots, &dst_snapshots).await?;
+    let new_snapshot = utils::create_snapshot(&src_session, &src.pool, &dataset.name).await?;
+    let total_bytes =
+        utils::estimate_send_size(&src_session, &latest_common_snapshot, &new_snapshot).await?;
     {
         let mut state = state.write().await;
         state.total_bytes = total_bytes;
     }
+
     http_return_barrier.wait().await;
 
-    let mut zfs_send = src_session
-        .command("zfs")
-        .arg("send")
-        .arg("-i")
-        .arg(&from_snapshot)
-        .arg(&to_snapshot)
-        .stdout(Stdio::piped())
-        .spawn()
-        .await
-        .unwrap();
-    let mut zfs_recv = dst_session
-        .command("zfs")
-        .arg("recv")
-        .arg("-F")
-        .arg(format!("{}/{}", &dst.pool, &dataset.name))
-        .stdin(Stdio::piped())
-        .spawn()
-        .await
-        .unwrap();
-
-    let mut send_output = zfs_send.stdout().take().unwrap();
-    let mut recv_input = zfs_recv.stdin().take().unwrap();
-
-    let mut total_bytes_sent: u64 = 0;
-    let mut buffer = [0u8; 65536]; // 64 KiB buffer
-    loop {
-        let n = send_output.read(&mut buffer).await.unwrap();
-        if n == 0 {
-            break;
-        }
-        recv_input.write_all(&buffer[..n]).await.unwrap();
-        total_bytes_sent += n as u64;
-        {
-            let mut state = state.write().await;
-            state.sent_bytes = total_bytes_sent;
-        }
-    }
-    recv_input.shutdown().await.unwrap();
-
-    let send_status = zfs_send.wait().await.unwrap();
-    let recv_status = zfs_recv.wait().await.unwrap();
-
-    println!("Send exited with: {}", send_status);
-    println!("Receive exited with: {}", recv_status);
+    utils::send_bytes(
+        &src_session,
+        &dst_session,
+        &latest_common_snapshot,
+        &new_snapshot,
+        &dst,
+        &dataset,
+        &state,
+    )
+    .await?;
 
     let mut states = states.write().await;
     let mut pos = None;
@@ -198,9 +60,10 @@ async fn sync_dataset(
     if let Some(pos) = pos {
         states.remove(pos);
     }
+    Ok(())
 }
 
-pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
+pub async fn sync_all(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
     let mut states_in_progress = vec![];
     let config = config.read().await;
     let mut http_return_barriers = vec![];
@@ -272,16 +135,11 @@ pub async fn sync(config: ConfigRef, states: SyncStates) -> warp::reply::Json {
     warp::reply::json(&states_to_return)
 }
 
-pub async fn sync_one(
-    req: SyncRequest,
-    config: ConfigRef,
-    states: SyncStates,
-) -> warp::reply::Json {
+pub async fn sync(req: SyncRequest, config: ConfigRef, states: SyncStates) -> warp::reply::Json {
     let config = config.read().await;
     let mut http_return_barriers = vec![];
     let mut is_in_progress = false;
 
-    //todo make req hold a vector of states
     for dataset in req.datasets {
         let dataset = config
             .datasets
