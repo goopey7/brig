@@ -7,7 +7,7 @@ mod utils;
 use std::sync::Arc;
 
 use anyhow::Result;
-use brig_common::api::switch::SwitchRequest;
+use brig_common::api::{switch::SwitchRequest, sync::SyncRequest};
 use clap::Parser;
 use cli::Cli;
 use config::config::Config;
@@ -59,6 +59,14 @@ async fn main() -> Result<()> {
         .and(states_filter.clone())
         .then(api::sync);
 
+    let sync_one = warp::post()
+        .and(warp::path("sync"))
+        .and(warp::path::end())
+        .and(warp::body::json::<SyncRequest>())
+        .and(config_filter.clone())
+        .and(states_filter.clone())
+        .then(api::sync::sync_one);
+
     let clean = warp::get()
         .and(warp::path("clean"))
         .and(warp::path::end())
@@ -73,7 +81,7 @@ async fn main() -> Result<()> {
         .and(config_filter)
         .then(api::switch);
 
-    let routes = status.or(sync).or(clean).or(switch);
+    let routes = status.or(sync).or(clean).or(switch).or(sync_one);
 
     warp::serve(routes).run(([0, 0, 0, 0], 3030)).await;
 
